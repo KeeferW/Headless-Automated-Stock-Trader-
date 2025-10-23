@@ -1,7 +1,7 @@
-# Trading Bot With Alpaca API
+# Jellyfish Trading Bot With Alpaca API
 
 - Captures a frame each hour while the market is open (per Alpaca clock).
-- Uses HSV masking tto track the movement of jellyfish via George Aquarium Livestream.
+- Uses HSV masking to track the movement of jellyfish via the Georgia Aquarium livestream.
 - Picks a stock based off the OpenCV output and submits a paper notional buy with Alpaca's API.
 - Refreshes tickers daily.
 - Serves health endpoints for deployment checks.
