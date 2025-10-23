@@ -1,0 +1,105 @@
+import re
+import requests
+from .utils import log
+
+SNP500_CSV_URLS = [
+    "https://raw.githubusercontent.com/datasets/s-and-p-500/master/data/constituents.csv",
+]
+WIKIPEDIA_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+USER_AGENT = {"User-Agent": "Mozilla/5.0"}
+
+def _download_text(url: str, timeout: int = 20) -> str:
+    r = requests.get(url, headers=USER_AGENT, timeout=timeout)
+    r.raise_for_status()
+    return r.text
+
+def _parse_csv_symbols(csv_text: str) -> list[str]:
+    lines = [ln.strip() for ln in csv_text.splitlines() if ln.strip()]
+    if not lines:
+        return []
+    header = [h.strip().lower() for h in lines[0].split(",")]
+    sym_idx = None
+    for key in ("symbol", "ticker"):
+        if key in header:
+            sym_idx = header.index(key)
+            break
+    if sym_idx is None:
+        return []
+    syms = []
+    for ln in lines[1:]:
+        parts = [p.strip() for p in ln.split(",")]
+        if sym_idx >= len(parts):
+            continue
+        sym = parts[sym_idx].upper().replace(".", "-")
+        if sym and " " not in sym:
+            syms.append(sym)
+    return sorted(set(syms))
+
+def _strip_tags(html: str) -> str:
+    html = re.sub(r"<sup.*?</sup>", "", html, flags=re.S | re.I)
+    html = re.sub(r"<span.*?>", "", html, flags=re.S | re.I)
+    html = re.sub(r"</span>", "", html, flags=re.S | re.I)
+    return re.sub(r"<.*?>", "", html, flags=re.S)
+
+def _parse_wikipedia_symbols(html: str) -> list[str]:
+    tables = re.findall(r"<table[^>]*class=\"[^\"]*wikitable[^\"]*\".*?>.*?</table>", html, flags=re.S | re.I)
+    if not tables:
+        return []
+    for tbl in tables:
+        header_match = re.search(r"<tr.*?>(.*?)</tr>", tbl, flags=re.S | re.I)
+        if not header_match:
+            continue
+        header_html = header_match.group(1)
+        headers = re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", header_html, flags=re.S | re.I)
+        headers_clean = [_strip_tags(h).strip().lower() for h in headers]
+        sym_idx = None
+        for i, h in enumerate(headers_clean):
+            if "symbol" in h:
+                sym_idx = i
+                break
+        if sym_idx is None:
+            continue
+        rows = re.findall(r"<tr[^>]*>(.*?)</tr>", tbl, flags=re.S | re.I)
+        symbols = []
+        for row_html in rows[1:]:
+            cols = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row_html, flags=re.S | re.I)
+            if not cols or sym_idx >= len(cols):
+                continue
+            cell = cols[sym_idx]
+            text = _strip_tags(cell).strip()
+            if not text:
+                continue
+            sym = text.split()[0].split(",")[0].upper().replace(".", "-")
+            if sym and " " not in sym and len(sym) <= 8:
+                symbols.append(sym)
+        if len(symbols) >= 450:
+            return sorted(set(symbols))
+    return []
+
+def _fetch_sp500_symbols_fast() -> list[str]:
+    for url in SNP500_CSV_URLS:
+        try:
+            txt = _download_text(url)
+            syms = _parse_csv_symbols(txt)
+            if syms:
+                return syms
+        except Exception:
+            continue
+    try:
+        html = _download_text(WIKIPEDIA_SP500_URL)
+        syms = _parse_wikipedia_symbols(html)
+        if syms:
+            return syms
+    except Exception:
+        pass
+    raise RuntimeError("Could not load S&P 500 symbols from available sources.")
+
+def polygon_top_by_market_cap(n=500) -> tuple[list[str], dict[str, float]]:
+    # Fast path: just S&P 500 constituents; return zeroed cap map
+    sp500 = _fetch_sp500_symbols_fast()
+    if not sp500:
+        raise RuntimeError("No S&P 500 symbols loaded.")
+    sp500 = sp500[:n]
+    cap_map = {s: 0.0 for s in sp500}
+    log(f"Loaded {len(sp500)} symbols for cap map.")
+    return sp500, cap_map
